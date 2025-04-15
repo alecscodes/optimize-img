@@ -1,0 +1,230 @@
+#!/bin/bash
+
+# optimize-img - Image optimization script for macOS
+#
+# Description:
+#   A powerful tool to optimize PNG, JPEG, and WebP images for web use. This script
+#   can reduce image file sizes without significant quality loss and optionally
+#   convert images to the WebP format.
+#
+# Usage: optimize-img [options] [image_files]
+#
+# Arguments:
+#   [image_files]       Optional. Specific image files to optimize.
+#                       If not provided, all images in current directory will be processed.
+#                       Supports PNG, JPEG, WebP, and SVG formats.
+#
+# Options:
+#   --no-backup         Skip creating backup files of original images.
+#                       Default behavior creates [filename]-old.[ext] backup files.
+#
+#   --webp              Convert images to WebP format while preserving originals.
+#                       Creates a new .webp file alongside each original with 80% quality.
+#                       When used alone, original files remain unchanged.
+#
+#   -h, --help          Display this help message and exit.
+#
+# Examples:
+#   optimize-img                            # Optimize all images in current directory
+#   optimize-img image1.png image2.jpg      # Optimize specific image files
+#   optimize-img --no-backup                # Optimize all images without creating backups
+#   optimize-img --webp                     # Convert all images to WebP format
+#   optimize-img --webp --no-backup img.png # Convert to WebP without backup of original
+
+# Function to display help information
+show_help() {
+    cat << EOF
+optimize-img - Image optimization script for macOS
+
+DESCRIPTION:
+    A powerful tool to optimize PNG, JPEG, and WebP images for web use.
+    This script can reduce image file sizes without significant quality loss
+    and optionally convert images to the WebP format.
+
+USAGE:
+    optimize-img [options] [image_files]
+
+ARGUMENTS:
+    [image_files]       Optional. Specific image files to optimize.
+                        If not provided, all images in current directory will be processed.
+                        Supported formats: PNG, JPEG, WebP, and SVG.
+                        
+OPTIONS:
+    -h, --help          Display this help message and exit.
+    
+    --no-backup         Skip creating backup files of original images.
+                        Default behavior creates [filename]-old.[ext] backup files.
+                        Use this to save disk space when you have version control
+                        or don't need the original files.
+    
+    --webp              Convert images to WebP format while preserving originals.
+                        Creates a new .webp file alongside each original with 80% quality.
+                        The original files remain unchanged when used alone.
+                        WebP provides superior compression for web use compared to
+                        traditional formats.
+
+COMBINATIONS:
+    --webp --no-backup  Convert to WebP format while also optimizing originals
+                        without creating backups of the originals.
+                        
+    [no options]        Optimize all images in current directory and create backups
+                        of the original files for safety.
+
+FILE HANDLING:
+    PNG                 Optimized with pngquant (65-80% quality, strip metadata)
+    JPEG                Optimized with jpegoptim (80% quality, strip metadata)
+    WebP                Recompressed to 80% quality
+    SVG                 No optimization performed (detected only)
+
+EXAMPLES:
+    optimize-img                            # Optimize all images in current directory
+    optimize-img image1.png image2.jpg      # Optimize specific image files
+    optimize-img --no-backup                # Optimize all images without creating backups
+    optimize-img --webp                     # Convert all images to WebP format
+    optimize-img --webp --no-backup img.png # Convert to WebP without backup of original
+EOF
+}
+
+# Function to check if required tools are installed
+check_dependencies() {
+    local missing_deps=()
+
+    if ! command -v pngquant &>/dev/null; then
+        missing_deps+=("pngquant")
+    fi
+    if ! command -v jpegoptim &>/dev/null; then
+        missing_deps+=("jpegoptim")
+    fi
+    if ! command -v cwebp &>/dev/null; then
+        missing_deps+=("webp")
+    fi
+
+    if [ ${#missing_deps[@]} -ne 0 ]; then
+        echo "Error: Missing dependencies. Please install the following with Homebrew:"
+        echo "brew install ${missing_deps[*]}"
+        exit 1
+    fi
+}
+
+# Function to optimize a single image
+optimize_image() {
+    local file="$1"
+    local no_backup="$2"
+    local convert_webp="$3"
+    local extension="${file##*.}"
+    local filename="${file%.*}"
+    local backup_file="${filename}-old.${extension}"
+
+    # Convert extension to lowercase for comparison
+    extension=$(echo "$extension" | tr '[:upper:]' '[:lower:]')
+
+    # If --webp is specified, just convert to WebP without optimizing original
+    if [ "$convert_webp" = true ] && [ "$extension" != "webp" ] && [ "$extension" != "svg" ]; then
+        echo "Converting to WebP: $file"
+        cwebp -q 80 "$file" -o "${filename}.webp"
+        echo "Created WebP version: ${filename}.webp"
+        return
+    fi
+
+    # Create backup if needed
+    if [ "$no_backup" = false ]; then
+        cp "$file" "$backup_file"
+        echo "Created backup: $backup_file"
+    fi
+
+    # Optimize based on file type
+    case "$extension" in
+    png)
+        echo "Optimizing PNG: $file"
+        pngquant --force --strip --quality=65-80 --speed 1 --output "$file" "$file"
+        ;;
+    jpg | jpeg)
+        echo "Optimizing JPEG: $file"
+        jpegoptim --strip-all --max=80 "$file"
+        ;;
+    webp)
+        echo "Optimizing WebP: $file"
+        cwebp -q 80 "$file" -o "${file}.temp" && mv "${file}.temp" "$file"
+        ;;
+    svg)
+        echo "SVG file detected: $file (no optimization performed)"
+        ;;
+    *)
+        echo "Unsupported format for $file, skipping..."
+        return
+        ;;
+    esac
+}
+
+# Main function
+main() {
+    # Check for help option first
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        show_help
+        exit 0
+    fi
+
+    # Check dependencies
+    check_dependencies
+
+    # Default options
+    no_backup=false
+    convert_webp=false
+
+    # Parse command line options
+    files=()
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+        --no-backup)
+            no_backup=true
+            shift
+            ;;
+        --webp)
+            convert_webp=true
+            shift
+            ;;
+        -h|--help)
+            show_help
+            exit 0
+            ;;
+        -*)
+            echo "Unknown option: $1"
+            echo "Use -h or --help for usage information."
+            exit 1
+            ;;
+        *)
+            files+=("$1")
+            shift
+            ;;
+        esac
+    done
+
+    # If no files specified, use all images in current directory
+    if [ ${#files[@]} -eq 0 ]; then
+        # Using find and a for loop instead of mapfile for better compatibility
+        image_count=0
+        for img in $(find . -maxdepth 1 -type f \( -iname "*.png" -o -iname "*.jpg" -o -iname "*.jpeg" -o -iname "*.webp" -o -iname "*.svg" \) -not -path "*.*/\.*"); do
+            files+=("$img")
+            image_count=$((image_count + 1))
+        done
+
+        if [ $image_count -eq 0 ]; then
+            echo "No image files found in current directory."
+            exit 0
+        fi
+    fi
+
+    # Process each file
+    for file in "${files[@]}"; do
+        if [ -f "$file" ]; then
+            optimize_image "$file" "$no_backup" "$convert_webp"
+        else
+            echo "File not found: $file"
+        fi
+    done
+
+    echo "Done!"
+}
+
+# Execute main function
+main "$@"
